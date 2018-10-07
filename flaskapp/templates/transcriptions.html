@@ -1,0 +1,70 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+<div class="container text-left"  id="container">
+
+    {% from "include/_formhelpers.html" import render_field %}
+    <div class="form-group">
+        <h1>Transcriptions</h1>
+        <form action="" method="POST" enctype="multipart/form-data">
+          <div class="row">
+            <div class="col-xs-4">
+                {{render_field(form.transcription, class_="form-control")}}
+            </div>
+          </div>
+          <br>
+          <div class="row">
+            <div class="col-xs-4">
+                <b>Upload audit file</b>
+                <input type="file" id="sound" name="sound"/> <br/>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-xs-4">
+                {{render_field(form.template, class_="form-control", )}}
+            </div>
+          </div>
+          <br>
+          <button id="btn-create" type="submit" name='btn' value='create' class="btn btn-warning">Create transcription</button>
+
+        </form>
+    </div>
+    <br>
+
+    <ul class="list-group">
+    <li class="list-group-item">
+        <div class="row">
+            <div class="col-xs-2">
+                <p><b>Transcription</b></p>
+            </div>
+            <div class="col-xs-2">
+                <p><b>Audio file</b></p>
+            </div>
+            <div class="col-xs-2">
+                <p><b>Template file</b></p>
+            </div>
+        </div>
+    </li>
+    {% for transcription in transcriptions %}
+    <li class="list-group-item">
+        <form action="" method="POST">
+            <div class="row">
+                <div class="col-xs-2">
+                        <p>{{transcription['M']['Transcription']['S']}}</p>
+                </div>
+                <div class="col-xs-2">
+                        <p>{{transcription['M']['Audiofile']['S']}}</p>
+                </div>
+                <div class="col-xs-2">
+                        <p>{{transcription['M']['Template']['S']}}</p>
+                </div>
+                <div class="col-xs-2">
+                    <button id="btn-delete" type="submit" name='btn' value={{transcription['M']['Transcription']['S']}} class="btn btn-danger">Delete transcription</button>
+                </div>
+            </div>
+        </form>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

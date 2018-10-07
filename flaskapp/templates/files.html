@@ -6,7 +6,6 @@
         <p>You can upload new templates</p>
         <input type="file" id="files" /> <br />
         <button id="btn-upload" type="button" class="btn btn-primary">Upload</button>
-        <button id="btn-view" type="submit" class="btn btn-secondary">View</button>
         <div id="app"></div>
     </div>
   <script>
@@ -14,7 +13,6 @@
         // Here you have access to your variable
     })
 
-    var collection = '{{collection}}'
     var i = 0;
     var accessKeyId;
     var secretAccessKey;
@@ -26,19 +24,15 @@
 
     document.getElementById("btn-upload").addEventListener("click", function(){
         console.log('uploading...');
-        addPhoto();
-    });
-
-    document.getElementById("btn-view").addEventListener("click", function(){
-        console.log('viewing...');
-        viewAlbum();
+        addTemplate();
+        viewTemplates();
     });
 
     function getHtml(template, photoKey) {
       return template.join('\n');
     }
 
-    function viewAlbum() {
+    function viewTemplates() {
       var albumName = '{{ session.username}}'
       albumName = albumName.replace('@', '-')
       var albumPhotosKey = albumName + '/';  //encodeURIComponent(albumName) + '/';
@@ -65,7 +59,7 @@
                              '</span>',
                         '</div>',
                         '<div class="col-xs-4 text-center">',
-                            '<button id="' + i + '" type="button" class="btn btn-danger" value="' + photoKey + '"onclick="deletePhoto(' + i + ')">Delete</button>',
+                            '<button id="' + i + '" type="button" class="btn btn-danger" value="' + photoKey + '"onclick="deleteTemplate(' + i + ')">Delete</button>',
                         '</div>',
                     '</div>',
                 '</li>',
@@ -84,7 +78,7 @@
       });
     }
 
-    function addPhoto() {
+    function addTemplate() {
         var files = document.getElementById('files').files;
         if (!files.length) {
             console.log('no file selected');
@@ -105,19 +99,19 @@
           return alert('There was an error uploading image: ', err.message);
         }
         console.log('Successfully uploaded photo.');
-        viewAlbum();
       });
+      viewTemplates();
     }
 
-    function deletePhoto(i) {
+    function deleteTemplate(i) {
       photoKey = document.getElementById(i).value
       s3.deleteObject({Key: photoKey}, function(err, data) {
         if (err) {
           return alert('There was an error deleting your photo: ', err.message);
         }
-        viewAlbum();
+        viewTemplates();
       });
     }
-
+    viewTemplates();
   </script>
 {% endblock %}
