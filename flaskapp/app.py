@@ -204,8 +204,7 @@ def upload_file(file_stream, filename, content_type, username):
     """
     app.logger.info("uploading")
     #client = storage.Client(project='speech-210613')
-    client = storage.Client.from_service_account_json(
-        'service_account.json')
+    client = storage.Client() #.from_service_account_json('service_account.json')
     bucket = client.bucket('transcribe-sounds')
     blob = bucket.blob(username + "/" + filename)
     app.logger.info("%s - %s - %s", client, bucket, blob)
