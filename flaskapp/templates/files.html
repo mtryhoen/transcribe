@@ -35,7 +35,7 @@
     function viewTemplates() {
       var albumName = '{{ session.username}}'
       albumName = albumName.replace('@', '-')
-      var albumPhotosKey = albumName + '/';  //encodeURIComponent(albumName) + '/';
+      var albumPhotosKey = albumName + '/templates/';  //encodeURIComponent(albumName) + '/';
       s3.listObjects({Prefix: albumPhotosKey}, function(err, data) {
         if (err) {
           return alert('There was an error viewing your album: ' + err.message);
@@ -88,7 +88,7 @@
         var user = '{{ session.username}}'
         user = user.replace('@', '-')
 
-        var keyName = user + '/' + fileName;
+        var keyName = user + '/templates/' + fileName;
 
       s3.upload({
         Key: keyName,

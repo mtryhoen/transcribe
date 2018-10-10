@@ -1,11 +1,14 @@
 from flask import Flask, render_template, request, flash, redirect, url_for, session, logging
 import boto3
-import datetime
+import datetime, time
 import sys, os
 from wtforms import Form, StringField, PasswordField, validators, SelectField, SubmitField
 from passlib.hash import sha256_crypt
 from functools import wraps
 import google.cloud.storage as storage
+from string import Template
+import cloudconvert
+import json
 
 app = Flask(__name__)
 
@@ -58,16 +61,17 @@ def transcription():
         objectKey=email.replace('@', '-')
         response = s3.list_objects_v2(
             Bucket="transcribe-template-files",
-            Prefix=objectKey
+            Prefix=objectKey + "/templates/"
         )
         templates = response['Contents']
     except:
         templates = []
     templateList = []
     for i in range(len(templates)):
-        crap, object = str(templates[i]['Key']).split('/')
-        data = (str(i), object)
-        templateList.append(data)
+        crap1, crap2, object = str(templates[i]['Key']).split('/')
+        if crap2 == "templates":
+            data = (str(i), object)
+            templateList.append(data)
     form.template.choices = templateList
 
     try:
@@ -96,36 +100,82 @@ def transcription():
             objectKey = email.replace('@', '-')
             url = upload_source_file(request.files.get('sound'), objectKey)
             audiofile = request.files.get('sound').filename
+            time.sleep(5)
+            if ".mp3" in audiofile:
+                print("converting from mp3")
+                format = "mp3"
+                #audioconvert(objectKey + "/" + audiofile, credential_path, format)
+                audiofile = audiofile.replace("mp3", "flac")
+            elif ".wav" in audiofile:
+                format = "wav"
+                print("converting from wav")
+                #audioconvert(objectKey + "/" + audiofile, credential_path, format)
+                audiofile.replace("wav", "flac")
+            elif ".flac" in audiofile:
+                print("file already in flac format")
+            else:
+                print("Unsupported file format")
             gcs_uri="gs://transcribe-sounds/" + objectKey + "/" + audiofile
+            print(audiofile)
+            metadata(audiofile, objectKey)
             app.logger.info('URL: %s', url)
             #return redirect(url_for('transcription'))
         except:
             flash('Could not upload the file', 'danger')
             audiofile = "NA"
             url = "NA"
-            #return redirect(url_for('transcription'))
+            return redirect(url_for('transcription'))
         try:
-            response = ddb.update_item(
-                UpdateExpression="SET transcriptions = list_append(transcriptions, :col)",
-                ExpressionAttributeValues={
-                    ':col': {
-                        "L": [
-                            {"M": {"Transcription": {"S": transcription}, "File": {"S": url},
-                                               "Template": {"S": template[1]}, "Audiofile": {"S": audiofile}}}
-                        ]
-                    },
-                },
-                Key={
-                    'email': {
-                        'S': email,
-                    },
-                },
-                TableName='users_transcribe',
-            )
             app.logger.info('Create Transcriptions: %s', response)
             app.logger.info('URI: %s', gcs_uri)
-            transcribe_gcs(gcs_uri)
-            return redirect(url_for('transcription'))
+            text = transcribe_gcs(gcs_uri)
+            try:
+                # open the file
+                objectKey = email.replace('@', '-')
+                response = s3.get_object(
+                    Bucket="transcribe-template-files",
+                    Key=objectKey + "/templates/" + template[1]
+                )
+                filein = response['Body'].read().decode("utf-8")
+                # read it
+                src = Template(filein)
+                # document data
+                d = {'TEXT': text}
+                # do the substitution
+                result = src.substitute(d)
+                print(result)
+                resultb = str.encode(result)
+                response = s3.put_object(
+                    Bucket="transcribe-template-files",
+                    Key=objectKey + "/results/" + transcription + "-" + str(template[1]),
+                    Body=resultb
+                )
+                puburl = s3.generate_presigned_url('get_object', Params={'Bucket': 'transcribe-template-files', 'Key': objectKey + "/results/" + transcription + "-" + str(template[1])},
+                                        ExpiresIn=3600)
+
+                response = ddb.update_item(
+                    UpdateExpression="SET transcriptions = list_append(transcriptions, :col)",
+                    ExpressionAttributeValues={
+                        ':col': {
+                            "L": [
+                                {"M": {"Transcription": {"S": transcription}, "File": {"S": url},
+                                       "Template": {"S": template[1]}, "Audiofile": {"S": audiofile},
+                                       "Result": {"S": puburl}}}
+                            ]
+                        },
+                    },
+                    Key={
+                        'email': {
+                            'S': email,
+                        },
+                    },
+                    TableName='users_transcribe',
+                )
+
+                return redirect(url_for('transcription'))
+            except:
+                app.logger.info('Error: %s', sys.exc_info()[0])
+                return redirect(url_for('transcription'))
         except :
             try:
                 response = ddb.update_item(
@@ -134,7 +184,8 @@ def transcription():
                         ':col': {
                             "L": [
                                 {"M": {"Transcription": {"S": transcription}, "File": {"S": url},
-                                       "Template": {"S": template[1]}, "Audiofile": {"S": audiofile}}}
+                                       "Template": {"S": template[1]}, "Audiofile": {"S": audiofile},
+                                       "Result": {"S": "Result"}}}
                             ]
                         },
                     },
@@ -175,6 +226,65 @@ def transcription():
         return render_template('transcriptions.html', form=form, transcriptions=transcriptions)
     else:
         return render_template('transcriptions.html', form=form, transcriptions=transcriptions)
+
+def audioconvert(filename, credential_path, audioformat):
+    if credential_path:
+        with open(credential_path, 'r') as f:
+            gccred = json.load(f)
+    api = cloudconvert.Api('')
+    try:
+        process = api.convert({
+            "inputformat": audioformat,
+            "outputformat": "flac",
+            "input": {
+                "googlecloud": {
+                    "projectid": "speech-210613",
+                    "bucket": "transcribe-sounds",
+                    "credentials": {
+                        "type": gccred["type"],
+                        "project_id": gccred["project_id"],
+                        "private_key_id": gccred["private_key_id"],
+                        "private_key": gccred["private_key"],
+                        "client_email": gccred["client_email"],
+                        "client_id": gccred["client_id"],
+                        "auth_uri": gccred["auth_uri"],
+                        "token_uri": gccred["token_uri"],
+                        "auth_provider_x509_cert_url": gccred["auth_provider_x509_cert_url"],
+                        "client_x509_cert_url": gccred["client_x509_cert_url"]
+                    }
+                }
+            },
+            "file": "" + filename + "",
+            "converteroptions": {
+                "audio_codec": "FLAC",
+                "audio_bitrate": "128",
+                "audio_frequency": "8000",
+                "strip_metatags": "false"
+            },
+            "save": True,
+            "output": {
+                "googlecloud": {
+                    "projectid": "speech-210613",
+                    "bucket": "transcribe-sounds",
+                    "credentials": {
+                        "type": gccred["type"],
+                        "project_id": gccred["project_id"],
+                        "private_key_id": gccred["private_key_id"],
+                        "private_key": gccred["private_key"],
+                        "client_email": gccred["client_email"],
+                        "client_id": gccred["client_id"],
+                        "auth_uri": gccred["auth_uri"],
+                        "token_uri": gccred["token_uri"],
+                        "auth_provider_x509_cert_url": gccred["auth_provider_x509_cert_url"],
+                        "client_x509_cert_url": gccred["client_x509_cert_url"]
+                    }
+
+                }
+            }
+        })
+    except:
+        app.logger.info('Error: %s', sys.exc_info()[0])
+    process.wait()
 
 def upload_source_file(file, username):
     """
@@ -223,15 +333,30 @@ def upload_file(file_stream, filename, content_type, username):
 
     return url
 
+
+def metadata(filename, username):
+    """
+    Uploads a file to a given Cloud Storage bucket and returns the public url
+    to the new object.
+    """
+    metadata = {'Content-Type': 'audio/flac'}
+    client = storage.Client() #.from_service_account_json('service_account.json')
+    bucket = client.bucket('transcribe-sounds')
+    blob = bucket.blob(username + "/" + filename)
+    app.logger.info("%s - %s - %s", client, bucket, blob)
+
+    blob.metadata = metadata
+
+
 def transcribe_gcs(gcs_uri):
     """Asynchronously transcribes the audio file specified by the gcs_uri."""
     from google.cloud import speech
     from google.cloud.speech import enums
     from google.cloud.speech import types
+    text = ""
     try:
         app.logger.info("Speech: %s", "YES")
         client = speech.SpeechClient()
-        app.logger.info("Client Speech: %s", client)
         audio = types.RecognitionAudio(uri=gcs_uri)
         config = types.RecognitionConfig(
             encoding=enums.RecognitionConfig.AudioEncoding.FLAC,
@@ -249,9 +374,22 @@ def transcribe_gcs(gcs_uri):
             # The first alternative is the most likely one for this portion.
             print(u'Transcript: {}'.format(result.alternatives[0].transcript))
             print('Confidence: {}'.format(result.alternatives[0].confidence))
-
+            text = text + result.alternatives[0].transcript
+        return text
     except:
         app.logger.info('Error: %s', sys.exc_info()[0])
+
+
+def docx_replace(doc_obj, regex , replace):
+    for p in doc_obj.paragraphs:
+        if regex.search(p.text):
+            inline = p.runs
+            # Loop added to work with runs (strings with same style)
+            for i in range(len(inline)):
+                if regex.search(inline[i].text):
+                    text = regex.sub(replace, inline[i].text)
+                    inline[i].text = text
+
 
 @app.route('/files')
 @is_logged_in
