@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, flash, redirect, url_for, session, logging
+from flask import Flask, render_template, request, flash, redirect, url_for, session, logging, send_file
 import boto3
 import datetime, time
 import sys, os
@@ -9,6 +9,8 @@ import google.cloud.storage as storage
 from string import Template
 import cloudconvert
 import json
+import docx
+from io import StringIO, BytesIO
 
 app = Flask(__name__)
 
@@ -104,20 +106,18 @@ def transcription():
             if ".mp3" in audiofile:
                 print("converting from mp3")
                 format = "mp3"
-                #audioconvert(objectKey + "/" + audiofile, credential_path, format)
+                audioconvert(objectKey + "/" + audiofile, credential_path, format)
                 audiofile = audiofile.replace("mp3", "flac")
             elif ".wav" in audiofile:
                 format = "wav"
                 print("converting from wav")
-                #audioconvert(objectKey + "/" + audiofile, credential_path, format)
-                audiofile.replace("wav", "flac")
+                audioconvert(objectKey + "/" + audiofile, credential_path, format)
+                audiofile = audiofile.replace("wav", "flac")
             elif ".flac" in audiofile:
                 print("file already in flac format")
             else:
                 print("Unsupported file format")
             gcs_uri="gs://transcribe-sounds/" + objectKey + "/" + audiofile
-            print(audiofile)
-            metadata(audiofile, objectKey)
             app.logger.info('URL: %s', url)
             #return redirect(url_for('transcription'))
         except:
@@ -136,20 +136,45 @@ def transcription():
                     Bucket="transcribe-template-files",
                     Key=objectKey + "/templates/" + template[1]
                 )
-                filein = response['Body'].read().decode("utf-8")
-                # read it
-                src = Template(filein)
-                # document data
-                d = {'TEXT': text}
-                # do the substitution
-                result = src.substitute(d)
-                print(result)
-                resultb = str.encode(result)
-                response = s3.put_object(
-                    Bucket="transcribe-template-files",
-                    Key=objectKey + "/results/" + transcription + "-" + str(template[1]),
-                    Body=resultb
-                )
+                if ".docx" in template[1]:
+                    try:
+                        source_stream = BytesIO(response['Body'].read())
+                        document = docx.Document(source_stream)
+                        source_stream.close()
+
+                        for para in document.paragraphs:
+                            if "$text$" in para.text:
+                                cursor_paragraph = para #document.paragraphs[3]
+                                print(cursor_paragraph.text)
+                                cursor_paragraph.insert_paragraph_before(text=text)
+                                delete_paragraph(para)
+                                document.save('result.docx')
+                                with open('result.docx', 'rb') as data:
+                                    response = s3.put_object(
+                                        Bucket="transcribe-template-files",
+                                        Key=objectKey + "/results/" + transcription + "-" + str(template[1]),
+                                        Body=data
+                                )
+                                break
+                        os.remove('result.docx')
+                    except:
+                        app.logger.info('Error: %s', sys.exc_info()[0])
+                elif ".txt" in template[1]:
+                    filein = response['Body'].read().decode("utf-8")
+                    # read it
+                    src = Template(filein)
+                    # document data
+                    d = {'TEXT': text}
+                    # do the substitution
+                    result = src.substitute(d)
+                    print(result)
+                    resultb = str.encode(result)
+                    response = s3.put_object(
+                        Bucket="transcribe-template-files",
+                        Key=objectKey + "/results/" + transcription + "-" + str(template[1]),
+                        Body=resultb
+                    )
+
                 puburl = s3.generate_presigned_url('get_object', Params={'Bucket': 'transcribe-template-files', 'Key': objectKey + "/results/" + transcription + "-" + str(template[1])},
                                         ExpiresIn=3600)
 
@@ -226,6 +251,17 @@ def transcription():
         return render_template('transcriptions.html', form=form, transcriptions=transcriptions)
     else:
         return render_template('transcriptions.html', form=form, transcriptions=transcriptions)
+
+def delete_paragraph(paragraph):
+    p = paragraph._element
+    p.getparent().remove(p)
+    p._p = p._element = None
+
+# def getText(document):
+#     fullText = []
+#     for para in document.paragraphs:
+#         fullText.append(para.text)
+#     return str('\n'.join(fullText))
 
 def audioconvert(filename, credential_path, audioformat):
     if credential_path:
@@ -334,20 +370,6 @@ def upload_file(file_stream, filename, content_type, username):
     return url
 
 
-def metadata(filename, username):
-    """
-    Uploads a file to a given Cloud Storage bucket and returns the public url
-    to the new object.
-    """
-    metadata = {'Content-Type': 'audio/flac'}
-    client = storage.Client() #.from_service_account_json('service_account.json')
-    bucket = client.bucket('transcribe-sounds')
-    blob = bucket.blob(username + "/" + filename)
-    app.logger.info("%s - %s - %s", client, bucket, blob)
-
-    blob.metadata = metadata
-
-
 def transcribe_gcs(gcs_uri):
     """Asynchronously transcribes the audio file specified by the gcs_uri."""
     from google.cloud import speech
@@ -361,7 +383,8 @@ def transcribe_gcs(gcs_uri):
         config = types.RecognitionConfig(
             encoding=enums.RecognitionConfig.AudioEncoding.FLAC,
             sample_rate_hertz=8000,
-            language_code='fr-FR')
+            language_code='fr-FR',
+            enable_automatic_punctuation=True)
 
         operation = client.long_running_recognize(config, audio)
 
