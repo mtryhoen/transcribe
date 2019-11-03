@@ -41,7 +41,7 @@ olefile==0.44
 passlib==1.7.1
 pathspec==0.5.5
 pexpect==4.2.1
-Pillow==4.1.1
+Pillow==6.2.0
 pyasn1==0.1.9
 pycrypto==2.6.1
 pycups==1.9.73
